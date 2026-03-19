@@ -1,3 +1,0 @@
-horse.patrick.quebec {
-    reverse_proxy horse:3100
-}
