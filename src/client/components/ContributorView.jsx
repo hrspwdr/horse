@@ -12,6 +12,26 @@ const STATES = {
   COMPLETE: 'complete',
 };
 
+// Detect best supported recording format
+function getSupportedMimeType() {
+  const types = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+  ];
+  for (const type of types) {
+    if (MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return ''; // let the browser pick
+}
+
+function getFileExtension(mimeType) {
+  if (mimeType.includes('mp4')) return '.mp4';
+  if (mimeType.includes('ogg')) return '.ogg';
+  return '.webm';
+}
+
 export default function ContributorView() {
   const [state, setState] = useState(STATES.LOADING);
   const [session, setSession] = useState(null);
@@ -24,8 +44,10 @@ export default function ContributorView() {
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
   const analyserRef = useRef(null);
+  const audioContextRef = useRef(null);
   const streamRef = useRef(null);
   const referenceAudioRef = useRef(null);
+  const mimeTypeRef = useRef('');
 
   // Fetch session data
   useEffect(() => {
@@ -44,55 +66,82 @@ export default function ContributorView() {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
       }
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+      }
       if (audioUrl) URL.revokeObjectURL(audioUrl);
     };
   }, [audioUrl]);
 
   const currentChunk = session?.chunks?.[currentIndex];
 
-  const initMicrophone = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(stream);
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      analyserRef.current = analyser;
-
-      return stream;
-    } catch {
-      setError('Microphone access is required.');
-      return null;
+  // Get a fresh mic stream each time we record
+  const getFreshStream = useCallback(async () => {
+    // Stop any existing stream
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
     }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        sampleRate: 48000,
+        channelCount: 1,
+      },
+    });
+    streamRef.current = stream;
+
+    // Set up analyser for waveform visualization
+    const audioContext = new AudioContext({ sampleRate: 48000 });
+    const source = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    source.connect(analyser);
+    analyserRef.current = analyser;
+    audioContextRef.current = audioContext;
+
+    return stream;
   }, []);
 
   const startRecording = useCallback(async () => {
-    let stream = streamRef.current;
-    if (!stream) {
-      stream = await initMicrophone();
-      if (!stream) return;
+    try {
+      const stream = await getFreshStream();
+
+      chunksRef.current = [];
+      const mimeType = getSupportedMimeType();
+      mimeTypeRef.current = mimeType;
+
+      const recorderOptions = { audioBitsPerSecond: 256000 };
+      if (mimeType) recorderOptions.mimeType = mimeType;
+
+      const recorder = new MediaRecorder(stream, recorderOptions);
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, {
+          type: mimeType || 'audio/webm',
+        });
+        setAudioBlob(blob);
+        const url = URL.createObjectURL(blob);
+        setAudioUrl(url);
+        setState(STATES.REVIEW);
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start(); // no timeslice — collect as one blob on stop
+      setState(STATES.RECORDING);
+    } catch {
+      setError('Microphone access is required.');
     }
-
-    chunksRef.current = [];
-    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data);
-    };
-    recorder.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-      setAudioBlob(blob);
-      const url = URL.createObjectURL(blob);
-      setAudioUrl(url);
-      setState(STATES.REVIEW);
-    };
-
-    mediaRecorderRef.current = recorder;
-    recorder.start(100); // collect in 100ms chunks for responsiveness
-    setState(STATES.RECORDING);
-  }, [initMicrophone]);
+  }, [getFreshStream]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current?.state === 'recording') {
@@ -111,8 +160,9 @@ export default function ContributorView() {
     if (!audioBlob || !currentChunk) return;
     setState(STATES.UPLOADING);
 
+    const ext = getFileExtension(mimeTypeRef.current);
     const formData = new FormData();
-    formData.append('audio', audioBlob, 'recording.webm');
+    formData.append('audio', audioBlob, `recording${ext}`);
 
     try {
       await fetch(`/api/chunks/${currentChunk.id}/recording`, {

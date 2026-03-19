@@ -61,34 +61,33 @@ export default async function apiRoutes(fastify) {
     }
 
     const baseName = `${contributorName.replace(/[^a-zA-Z0-9]/g, '_')}_chunk${req.params.id}_${uuidv4()}`;
-    const webmPath = path.join(AUDIO_DIR, 'recordings', `${baseName}.webm`);
+    const srcExt = path.extname(data.filename) || '.webm';
+    const srcPath = path.join(AUDIO_DIR, 'recordings', `${baseName}${srcExt}`);
     const wavFilename = `${baseName}.wav`;
     const wavPath = path.join(AUDIO_DIR, 'recordings', wavFilename);
 
-    // Save the incoming webm
-    const writeStream = fs.createWriteStream(webmPath);
+    // Save the incoming audio (webm from Chrome, mp4 from Safari, etc.)
+    const writeStream = fs.createWriteStream(srcPath);
     await data.file.pipe(writeStream);
     await new Promise((resolve, reject) => {
       writeStream.on('finish', resolve);
       writeStream.on('error', reject);
     });
 
-    // Convert webm → wav (16-bit PCM, 48kHz)
+    // Convert to wav (16-bit PCM, 48kHz) — ffmpeg handles all input formats
     try {
       await execFileAsync('ffmpeg', [
-        '-i', webmPath,
+        '-i', srcPath,
         '-ar', '48000',
         '-ac', '1',
         '-sample_fmt', 's16',
         '-y',
         wavPath,
       ]);
-      // Remove the webm source after successful conversion
-      fs.unlinkSync(webmPath);
+      fs.unlinkSync(srcPath);
     } catch (err) {
-      // If ffmpeg fails, fall back to keeping the webm
       fastify.log.error('ffmpeg conversion failed:', err.message);
-      fs.renameSync(webmPath, wavPath); // keep it accessible, just wrong extension
+      fs.renameSync(srcPath, wavPath);
     }
 
     // Delete any previous recording for this chunk + contributor
