@@ -8,6 +8,8 @@ RUN npm run build
 
 FROM node:20-alpine AS production
 
+RUN apk add --no-cache ffmpeg
+
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev

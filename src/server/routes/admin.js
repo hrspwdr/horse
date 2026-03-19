@@ -168,7 +168,22 @@ export default async function adminRoutes(fastify) {
     if (!fs.existsSync(filePath)) return reply.code(404).send({ error: 'File not found' });
 
     reply.header('Content-Disposition', `attachment; filename="${recording.audio_path}"`);
-    return reply.type('audio/webm').sendFile(recording.audio_path, path.join(AUDIO_DIR, 'recordings'));
+    const mimeType = recording.audio_path.endsWith('.wav') ? 'audio/wav' : 'audio/webm';
+    return reply.type(mimeType).sendFile(recording.audio_path, path.join(AUDIO_DIR, 'recordings'));
+  });
+
+  // Recordings: delete individual
+  fastify.delete('/api/admin/recordings/:id', async (req, reply) => {
+    if (!checkAuth(req, reply)) return;
+
+    const recording = db.prepare('SELECT * FROM recordings WHERE id = ?').get(req.params.id);
+    if (!recording) return reply.code(404).send({ error: 'Recording not found' });
+
+    const filePath = path.join(AUDIO_DIR, 'recordings', recording.audio_path);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    db.prepare('DELETE FROM recordings WHERE id = ?').run(req.params.id);
+    return { success: true };
   });
 
   // Recordings: download all as zip-like concatenation (individual downloads for simplicity)

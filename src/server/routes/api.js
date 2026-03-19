@@ -1,6 +1,10 @@
 import path from 'path';
 import fs from 'fs';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { v4 as uuidv4 } from 'uuid';
+
+const execFileAsync = promisify(execFile);
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 const AUDIO_DIR = path.join(DATA_DIR, 'audio');
@@ -56,15 +60,36 @@ export default async function apiRoutes(fastify) {
       return reply.code(400).send({ error: 'No audio file provided' });
     }
 
-    const filename = `${contributorName.replace(/[^a-zA-Z0-9]/g, '_')}_chunk${req.params.id}_${uuidv4()}.webm`;
-    const filePath = path.join(AUDIO_DIR, 'recordings', filename);
+    const baseName = `${contributorName.replace(/[^a-zA-Z0-9]/g, '_')}_chunk${req.params.id}_${uuidv4()}`;
+    const webmPath = path.join(AUDIO_DIR, 'recordings', `${baseName}.webm`);
+    const wavFilename = `${baseName}.wav`;
+    const wavPath = path.join(AUDIO_DIR, 'recordings', wavFilename);
 
-    const writeStream = fs.createWriteStream(filePath);
+    // Save the incoming webm
+    const writeStream = fs.createWriteStream(webmPath);
     await data.file.pipe(writeStream);
     await new Promise((resolve, reject) => {
       writeStream.on('finish', resolve);
       writeStream.on('error', reject);
     });
+
+    // Convert webm → wav (16-bit PCM, 48kHz)
+    try {
+      await execFileAsync('ffmpeg', [
+        '-i', webmPath,
+        '-ar', '48000',
+        '-ac', '1',
+        '-sample_fmt', 's16',
+        '-y',
+        wavPath,
+      ]);
+      // Remove the webm source after successful conversion
+      fs.unlinkSync(webmPath);
+    } catch (err) {
+      // If ffmpeg fails, fall back to keeping the webm
+      fastify.log.error('ffmpeg conversion failed:', err.message);
+      fs.renameSync(webmPath, wavPath); // keep it accessible, just wrong extension
+    }
 
     // Delete any previous recording for this chunk + contributor
     const oldRecordings = db.prepare('SELECT audio_path FROM recordings WHERE chunk_id = ? AND contributor_name = ?').all(req.params.id, contributorName);
@@ -74,8 +99,8 @@ export default async function apiRoutes(fastify) {
     }
     db.prepare('DELETE FROM recordings WHERE chunk_id = ? AND contributor_name = ?').run(req.params.id, contributorName);
 
-    db.prepare('INSERT INTO recordings (chunk_id, contributor_name, audio_path) VALUES (?, ?, ?)').run(req.params.id, contributorName, filename);
+    db.prepare('INSERT INTO recordings (chunk_id, contributor_name, audio_path) VALUES (?, ?, ?)').run(req.params.id, contributorName, wavFilename);
 
-    return { success: true, filename };
+    return { success: true, filename: wavFilename };
   });
 }

@@ -96,6 +96,13 @@ export default function AdminView() {
     flash('Updated.');
   };
 
+  const deleteRecording = async (id) => {
+    if (!confirm('Delete this recording?')) return;
+    await fetch(`/api/admin/recordings/${id}`, { method: 'DELETE' });
+    loadData();
+    flash('Recording deleted.');
+  };
+
   const uploadReference = async (chunkId, file) => {
     const formData = new FormData();
     formData.append('audio', file);
@@ -233,13 +240,21 @@ export default function AdminView() {
               <span className="admin-recording-chunk">"{rec.chunk_text?.slice(0, 50)}..."</span>
               <span className="admin-recording-date">{new Date(rec.created_at).toLocaleString()}</span>
             </div>
-            <a
-              href={`/api/admin/recordings/${rec.id}/download`}
-              className="btn btn-small"
-              download
-            >
-              DOWNLOAD
-            </a>
+            <div className="admin-recording-actions">
+              <a
+                href={`/api/admin/recordings/${rec.id}/download`}
+                className="btn btn-small"
+                download
+              >
+                DOWNLOAD
+              </a>
+              <button
+                className="btn btn-small btn-danger"
+                onClick={() => deleteRecording(rec.id)}
+              >
+                DELETE
+              </button>
+            </div>
           </div>
         ))}
       </section>
