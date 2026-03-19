@@ -3,11 +3,17 @@ services:
     build: .
     container_name: horse
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:3100:3000"
+    expose:
+      - "3000"
     volumes:
       - /mnt/HC_Volume_105041860/horse_data:/data
     environment:
       - NODE_ENV=production
       - DATA_DIR=/data
       - ADMIN_PASSWORD=horse
+    networks:
+      - insight_default
+
+networks:
+  insight_default:
+    external: true
