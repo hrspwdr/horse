@@ -4,6 +4,7 @@ import AsciiHorse from './AsciiHorse.jsx';
 
 const STATES = {
   LOADING: 'loading',
+  IDENTIFY: 'identify',
   WELCOME: 'welcome',
   READY: 'ready',
   RECORDING: 'recording',
@@ -12,7 +13,55 @@ const STATES = {
   COMPLETE: 'complete',
 };
 
-// Detect best supported recording format
+// ── Translations ──
+
+const T = {
+  en: {
+    identify: 'IDENTIFY YOURSELF, PLEASE',
+    identifyPlaceholder: 'Your name',
+    identifyContinue: 'CONTINUE',
+    welcome: (name) => `Welcome, ${name}`,
+    lineCount: (n) => `You have ${n} line${n !== 1 ? 's' : ''} to record.`,
+    begin: 'BEGIN',
+    hearReference: 'HEAR REFERENCE',
+    hearingReference: '...',
+    record: 'RECORD',
+    stop: 'STOP',
+    recordingNow: 'RECORDING NOW',
+    retake: 'RETAKE',
+    submitNext: 'SUBMIT & NEXT',
+    submitFinal: 'SUBMIT FINAL',
+    transmitting: 'TRANSMITTING...',
+    complete: 'YOU HAVE SUCCESSFULLY BEEN A PART OF THE TEAM.',
+    micRequired: 'Microphone access is required.',
+    loadFailed: 'Failed to load session.',
+    uploadFailed: 'Upload failed. Please try again.',
+  },
+  fr: {
+    identify: 'IDENTIFIEZ-VOUS, S.V.P.',
+    identifyPlaceholder: 'Votre nom',
+    identifyContinue: 'CONTINUER',
+    welcome: (name) => `Bienvenue, ${name}`,
+    lineCount: (n) => `Vous avez ${n} ligne${n !== 1 ? 's' : ''} \u00e0 enregistrer.`,
+    begin: 'COMMENCER',
+    hearReference: '\u00c9COUTER LA R\u00c9F\u00c9RENCE',
+    hearingReference: '...',
+    record: 'ENREGISTRER',
+    stop: 'ARR\u00caTER',
+    recordingNow: 'ENREGISTREMENT EN COURS',
+    retake: 'REPRENDRE',
+    submitNext: 'SOUMETTRE & SUIVANT',
+    submitFinal: 'SOUMETTRE (FINAL)',
+    transmitting: 'TRANSMISSION...',
+    complete: 'VOUS AVEZ FAIT PARTIE DE L\u2019\u00c9QUIPE AVEC SUCC\u00c8S.',
+    micRequired: 'L\u2019acc\u00e8s au micro est requis.',
+    loadFailed: '\u00c9chec du chargement.',
+    uploadFailed: '\u00c9chec du t\u00e9l\u00e9versement. Veuillez r\u00e9essayer.',
+  },
+};
+
+// ── Audio format detection ──
+
 function getSupportedMimeType() {
   const types = [
     'audio/webm;codecs=opus',
@@ -23,7 +72,7 @@ function getSupportedMimeType() {
   for (const type of types) {
     if (MediaRecorder.isTypeSupported(type)) return type;
   }
-  return ''; // let the browser pick
+  return '';
 }
 
 function getFileExtension(mimeType) {
@@ -32,9 +81,13 @@ function getFileExtension(mimeType) {
   return '.webm';
 }
 
+// ── Component ──
+
 export default function ContributorView() {
   const [state, setState] = useState(STATES.LOADING);
   const [session, setSession] = useState(null);
+  const [contributorName, setContributorName] = useState('');
+  const [nameInput, setNameInput] = useState('');
   const [currentIndex, setCurrentIndex] = useState(0);
   const [audioBlob, setAudioBlob] = useState(null);
   const [audioUrl, setAudioUrl] = useState(null);
@@ -49,15 +102,23 @@ export default function ContributorView() {
   const referenceAudioRef = useRef(null);
   const mimeTypeRef = useRef('');
 
+  const lang = session?.language || 'en';
+  const t = T[lang] || T.en;
+
   // Fetch session data
   useEffect(() => {
     fetch('/api/session')
       .then(r => r.json())
       .then(data => {
         setSession(data);
-        setState(STATES.WELCOME);
+        if (data.idMode === 'self') {
+          setState(STATES.IDENTIFY);
+        } else {
+          setContributorName(data.contributorName || 'Friend');
+          setState(STATES.WELCOME);
+        }
       })
-      .catch(() => setError('Failed to load session.'));
+      .catch(() => setError(t.loadFailed));
   }, []);
 
   // Clean up on unmount
@@ -75,9 +136,7 @@ export default function ContributorView() {
 
   const currentChunk = session?.chunks?.[currentIndex];
 
-  // Get a fresh mic stream each time we record
   const getFreshStream = useCallback(async () => {
-    // Stop any existing stream
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
     }
@@ -96,7 +155,6 @@ export default function ContributorView() {
     });
     streamRef.current = stream;
 
-    // Set up analyser for waveform visualization
     const audioContext = new AudioContext({ sampleRate: 48000 });
     const source = audioContext.createMediaStreamSource(stream);
     const analyser = audioContext.createAnalyser();
@@ -136,12 +194,12 @@ export default function ContributorView() {
       };
 
       mediaRecorderRef.current = recorder;
-      recorder.start(); // no timeslice — collect as one blob on stop
+      recorder.start();
       setState(STATES.RECORDING);
     } catch {
-      setError('Microphone access is required.');
+      setError(t.micRequired);
     }
-  }, [getFreshStream]);
+  }, [getFreshStream, t]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current?.state === 'recording') {
@@ -164,8 +222,13 @@ export default function ContributorView() {
     const formData = new FormData();
     formData.append('audio', audioBlob, `recording${ext}`);
 
+    // Pass contributor name as query param in self-ID mode
+    const params = session?.idMode === 'self'
+      ? `?contributor=${encodeURIComponent(contributorName)}`
+      : '';
+
     try {
-      await fetch(`/api/chunks/${currentChunk.id}/recording`, {
+      await fetch(`/api/chunks/${currentChunk.id}/recording${params}`, {
         method: 'POST',
         body: formData,
       });
@@ -181,10 +244,10 @@ export default function ContributorView() {
         setState(STATES.READY);
       }
     } catch {
-      setError('Upload failed. Please try again.');
+      setError(t.uploadFailed);
       setState(STATES.REVIEW);
     }
-  }, [audioBlob, audioUrl, currentChunk, currentIndex, session]);
+  }, [audioBlob, audioUrl, currentChunk, currentIndex, session, contributorName, t]);
 
   const playReference = useCallback(() => {
     if (!currentChunk?.hasReference) return;
@@ -199,6 +262,13 @@ export default function ContributorView() {
     referenceAudioRef.current = audio;
     audio.play();
   }, [currentChunk]);
+
+  const submitIdentity = useCallback((e) => {
+    e.preventDefault();
+    if (!nameInput.trim()) return;
+    setContributorName(nameInput.trim());
+    setState(STATES.WELCOME);
+  }, [nameInput]);
 
   const beginSession = useCallback(() => {
     setState(STATES.READY);
@@ -222,18 +292,39 @@ export default function ContributorView() {
     );
   }
 
+  if (state === STATES.IDENTIFY) {
+    return (
+      <div className="container">
+        <form className="identify-screen" onSubmit={submitIdentity}>
+          <div className="identify-prompt">{t.identify}</div>
+          <input
+            type="text"
+            value={nameInput}
+            onChange={e => setNameInput(e.target.value)}
+            className="identify-input"
+            placeholder={t.identifyPlaceholder}
+            autoFocus
+          />
+          <button type="submit" className="btn btn-primary">
+            {t.identifyContinue}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
   if (state === STATES.WELCOME) {
     return (
       <div className="container">
         <div className="welcome-screen">
           <h1 className="welcome-name">
-            Welcome, {session.contributorName}
+            {t.welcome(contributorName)}
           </h1>
           <p className="welcome-sub">
-            You have {session.chunks.length} line{session.chunks.length !== 1 ? 's' : ''} to record.
+            {t.lineCount(session.chunks.length)}
           </p>
           <button className="btn btn-primary" onClick={beginSession}>
-            BEGIN
+            {t.begin}
           </button>
         </div>
       </div>
@@ -246,7 +337,7 @@ export default function ContributorView() {
         <div className="complete-screen">
           <AsciiHorse />
           <div className="complete-text">
-            YOU HAVE SUCCESSFULLY BEEN A PART OF THE TEAM.
+            {t.complete}
           </div>
         </div>
       </div>
@@ -270,27 +361,27 @@ export default function ContributorView() {
           onClick={playReference}
           disabled={state === STATES.RECORDING}
         >
-          {playingReference ? '...' : 'HEAR REFERENCE'}
+          {playingReference ? t.hearingReference : t.hearReference}
         </button>
       )}
 
       {state === STATES.RECORDING && (
         <div className="recording-indicator">
           <Waveform analyser={analyserRef.current} />
-          <div className="recording-now">RECORDING NOW</div>
+          <div className="recording-now">{t.recordingNow}</div>
         </div>
       )}
 
       <div className="controls">
         {state === STATES.READY && (
           <button className="btn btn-record" onClick={startRecording}>
-            RECORD
+            {t.record}
           </button>
         )}
 
         {state === STATES.RECORDING && (
           <button className="btn btn-stop" onClick={stopRecording}>
-            STOP
+            {t.stop}
           </button>
         )}
 
@@ -299,17 +390,17 @@ export default function ContributorView() {
             <audio src={audioUrl} controls className="playback" />
             <div className="review-controls">
               <button className="btn btn-secondary" onClick={retake}>
-                RETAKE
+                {t.retake}
               </button>
               <button className="btn btn-primary" onClick={submitAndNext}>
-                {currentIndex + 1 >= session.chunks.length ? 'SUBMIT FINAL' : 'SUBMIT & NEXT'}
+                {currentIndex + 1 >= session.chunks.length ? t.submitFinal : t.submitNext}
               </button>
             </div>
           </>
         )}
 
         {state === STATES.UPLOADING && (
-          <div className="uploading-text">TRANSMITTING...</div>
+          <div className="uploading-text">{t.transmitting}</div>
         )}
       </div>
     </div>

@@ -16,13 +16,20 @@ fs.mkdirSync(path.join(AUDIO_DIR, 'recordings'), { recursive: true });
 export default async function apiRoutes(fastify) {
   const { db } = fastify;
 
-  // Public: get current session info (contributor name + chunks)
-  fastify.get('/api/session', async () => {
-    const nameSetting = db.prepare('SELECT value FROM settings WHERE key = ?').get('contributor_name');
-    const chunks = db.prepare('SELECT id, text, display_order, reference_audio_path FROM chunks ORDER BY display_order ASC').all();
+  const getSetting = (key) => {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    return row?.value;
+  };
 
-    return {
-      contributorName: nameSetting?.value || 'Friend',
+  // Public: get current session info (contributor name + chunks + settings)
+  fastify.get('/api/session', async () => {
+    const chunks = db.prepare('SELECT id, text, display_order, reference_audio_path FROM chunks ORDER BY display_order ASC').all();
+    const idMode = getSetting('id_mode') || 'admin';
+    const language = getSetting('language') || 'en';
+
+    const result = {
+      idMode,
+      language,
       chunks: chunks.map(c => ({
         id: c.id,
         text: c.text,
@@ -30,6 +37,13 @@ export default async function apiRoutes(fastify) {
         hasReference: !!c.reference_audio_path,
       })),
     };
+
+    // Only include the admin-set name if in admin mode
+    if (idMode === 'admin') {
+      result.contributorName = getSetting('contributor_name') || 'Friend';
+    }
+
+    return result;
   });
 
   // Public: get reference audio for a chunk
@@ -52,8 +66,14 @@ export default async function apiRoutes(fastify) {
       return reply.code(404).send({ error: 'Chunk not found' });
     }
 
-    const nameSetting = db.prepare('SELECT value FROM settings WHERE key = ?').get('contributor_name');
-    const contributorName = nameSetting?.value || 'Unknown';
+    // Get contributor name from query param (self-ID mode) or settings (admin mode)
+    const idMode = getSetting('id_mode') || 'admin';
+    let contributorName;
+    if (idMode === 'self' && req.query.contributor) {
+      contributorName = req.query.contributor;
+    } else {
+      contributorName = getSetting('contributor_name') || 'Unknown';
+    }
 
     const data = await req.file();
     if (!data) {

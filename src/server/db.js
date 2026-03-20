@@ -31,10 +31,13 @@ db.exec(`
   );
 `);
 
-// Seed default settings if empty
-const existing = db.prepare('SELECT COUNT(*) as count FROM settings').get();
-if (existing.count === 0) {
-  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('contributor_name', 'Friend');
-}
+// Seed default settings
+const seedIfMissing = (key, value) => {
+  const row = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key);
+  if (!row) db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(key, value);
+};
+seedIfMissing('contributor_name', 'Friend');
+seedIfMissing('id_mode', 'admin');     // "admin" or "self"
+seedIfMissing('language', 'en');        // "en" or "fr"
 
 export default db;

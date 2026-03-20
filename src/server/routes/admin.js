@@ -52,10 +52,11 @@ export default async function adminRoutes(fastify) {
   // Settings: update
   fastify.put('/api/admin/settings', async (req, reply) => {
     if (!checkAuth(req, reply)) return;
-    const { contributor_name } = req.body || {};
-    if (contributor_name !== undefined) {
-      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('contributor_name', contributor_name);
-    }
+    const { contributor_name, id_mode, language } = req.body || {};
+    const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    if (contributor_name !== undefined) upsert.run('contributor_name', contributor_name);
+    if (id_mode !== undefined) upsert.run('id_mode', id_mode);
+    if (language !== undefined) upsert.run('language', language);
     return { success: true };
   });
 

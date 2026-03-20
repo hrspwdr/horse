@@ -5,6 +5,8 @@ export default function AdminView() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [contributorName, setContributorName] = useState('');
+  const [idMode, setIdMode] = useState('admin');
+  const [language, setLanguage] = useState('en');
   const [chunks, setChunks] = useState([]);
   const [newChunkText, setNewChunkText] = useState('');
   const [recordings, setRecordings] = useState([]);
@@ -44,6 +46,8 @@ export default function AdminView() {
     const recordingsData = await recordingsRes.json();
 
     setContributorName(settings.contributor_name || '');
+    setIdMode(settings.id_mode || 'admin');
+    setLanguage(settings.language || 'en');
     setChunks(chunksData);
     setRecordings(recordingsData);
   }, []);
@@ -57,15 +61,29 @@ export default function AdminView() {
     setTimeout(() => setMessage(''), 2000);
   };
 
-  const saveName = async () => {
-    setSaving(true);
+  const saveSetting = async (key, value) => {
     await fetch('/api/admin/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contributor_name: contributorName }),
+      body: JSON.stringify({ [key]: value }),
     });
-    setSaving(false);
     flash('Saved.');
+  };
+
+  const saveName = async () => {
+    setSaving(true);
+    await saveSetting('contributor_name', contributorName);
+    setSaving(false);
+  };
+
+  const toggleIdMode = async (mode) => {
+    setIdMode(mode);
+    await saveSetting('id_mode', mode);
+  };
+
+  const toggleLanguage = async (lang) => {
+    setLanguage(lang);
+    await saveSetting('language', lang);
   };
 
   const addChunk = async () => {
@@ -155,24 +173,66 @@ export default function AdminView() {
       <h1 className="admin-title">HORSE ADMIN</h1>
       {message && <div className="admin-flash">{message}</div>}
 
-      {/* Contributor Name */}
+      {/* Session Settings */}
       <section className="admin-section">
-        <h2 className="admin-section-title">Current Contributor</h2>
-        <div className="admin-row">
-          <input
-            type="text"
-            value={contributorName}
-            onChange={e => setContributorName(e.target.value)}
-            className="admin-input"
-            placeholder="Contributor name"
-          />
-          <button className="btn btn-primary" onClick={saveName} disabled={saving}>
-            {saving ? '...' : 'SAVE'}
-          </button>
+        <h2 className="admin-section-title">Session Settings</h2>
+
+        {/* ID Mode Toggle */}
+        <div className="admin-setting-row">
+          <span className="admin-setting-label">Identification</span>
+          <div className="admin-toggle-group">
+            <button
+              className={`admin-toggle ${idMode === 'admin' ? 'active' : ''}`}
+              onClick={() => toggleIdMode('admin')}
+            >
+              Patrick identifies
+            </button>
+            <button
+              className={`admin-toggle ${idMode === 'self' ? 'active' : ''}`}
+              onClick={() => toggleIdMode('self')}
+            >
+              Self-identify
+            </button>
+          </div>
         </div>
-        <p className="admin-hint">
-          This name appears on the welcome screen. Change it before each contributor records.
-        </p>
+
+        {/* Contributor Name (only shown in admin mode) */}
+        {idMode === 'admin' && (
+          <div className="admin-setting-row">
+            <span className="admin-setting-label">Contributor name</span>
+            <div className="admin-row">
+              <input
+                type="text"
+                value={contributorName}
+                onChange={e => setContributorName(e.target.value)}
+                className="admin-input"
+                placeholder="Contributor name"
+              />
+              <button className="btn btn-primary" onClick={saveName} disabled={saving}>
+                {saving ? '...' : 'SAVE'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Language Toggle */}
+        <div className="admin-setting-row">
+          <span className="admin-setting-label">Participant UI language</span>
+          <div className="admin-toggle-group">
+            <button
+              className={`admin-toggle ${language === 'en' ? 'active' : ''}`}
+              onClick={() => toggleLanguage('en')}
+            >
+              English
+            </button>
+            <button
+              className={`admin-toggle ${language === 'fr' ? 'active' : ''}`}
+              onClick={() => toggleLanguage('fr')}
+            >
+              Fran\u00e7ais
+            </button>
+          </div>
+        </div>
       </section>
 
       {/* Text Chunks */}
